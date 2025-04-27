@@ -31,7 +31,9 @@ def layout():
                              value=None,
                              clearable=False,
                              placeholder="Select a tournament"),
-            ], width=12, md=6, className="mb-3")
+            ], width=12, md=6, className="mb-3"),
+            dbc.Button("Submit", id='submit-button', n_clicks=0,
+                       color='primary', className="mb-3"),
         ]),
         dbc.Row([
             dbc.Col(
@@ -117,11 +119,14 @@ def update_tournament_dropdown(tournament_data_json):
 @callback(
     Output('tournament-wins-graph', 'figure'),
     Output('tournament-info-message', 'children'),
-    Input('tournament-dropdown', 'value'),
+    Input('submit-button', 'n_clicks'),
+    State('tournament-dropdown', 'value'),
     State('tournament-data-store', 'data'),
     prevent_initial_call=True
 )
-def update_tournament_wins_graph(selected_tournament, tournament_data_json):
+def update_tournament_wins_graph(n_clicks, selected_tournament, tournament_data_json):
+    if not n_clicks:
+        raise PreventUpdate
     # ... (Code identical to previous working version) ...
     print(
         f"Callback: update_tournament_wins_graph triggered for '{selected_tournament}'")

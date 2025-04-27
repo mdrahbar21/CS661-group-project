@@ -1,19 +1,42 @@
 import os
 import traceback
+import threading
+from flask_caching import Cache
 from google.cloud import bigquery
 import dash
-from dash import dcc, html, Input, Output
+from dash import dcc, html, Input, Output, callback, no_update
 import dash_bootstrap_components as dbc
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-# --- Set up GCP Credentials and BigQuery Client ---
-# removed the below line to avoid exposing credentials in the code instead used service account directly while deploying on GCP, COMMENT OUT when running locally
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"./primordial-veld-456613-n6-c5dd57e4037a.json"
-# Initialize a global BigQuery client
+# -----------------------------------------------------------------------------
+#  App & Server Setup
+# -----------------------------------------------------------------------------
+
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./primordial-veld-456613-n6-c5dd57e4037a.json"
+
+app = dash.Dash(__name__, use_pages=True,
+                external_stylesheets=[dbc.themes.BOOTSTRAP])
+server = app.server
+
+# -----------------------------------------------------------------------------
+#  Set up Flask-Caching
+# -----------------------------------------------------------------------------
+
+cache = Cache(server, config={
+    'CACHE_TYPE': 'simple',            # in-memory cache; swap for redis/memcached in prod
+    'CACHE_DEFAULT_TIMEOUT': 60*60     # 1 hour
+})
+
+# -----------------------------------------------------------------------------
+#  BigQuery client
+# -----------------------------------------------------------------------------
+
 bq_client = bigquery.Client()
 
-# --- Helper Function: Load any table from BigQuery ---
+# -----------------------------------------------------------------------------
+#  Your existing load functions (unchanged)
+# -----------------------------------------------------------------------------
 
 
 def load_table_from_bigquery(table_name: str) -> pd.DataFrame:
@@ -34,10 +57,8 @@ def load_table_from_bigquery(table_name: str) -> pd.DataFrame:
         traceback.print_exc()
         return None
 
-# --- Helper Function: Load Main Data (from bigquery 'total_data') ---
 
-
-def load_main_data():
+def load_main_data() -> pd.DataFrame:
     print("--- Running load_main_data() [BigQuery: total_data] ---")
     df = load_table_from_bigquery('total_data')
     if df is None or df.empty:
@@ -116,12 +137,11 @@ def load_main_data():
             df[col] = 'Unknown'
 
     print(f"--- load_main_data() done, shape: {df.shape} ---")
+
     return df
 
-# --- Helper Function: Load Tournament Data (BigQuery: mw_overall) ---
 
-
-def load_tournament_data():
+def load_tournament_data() -> pd.DataFrame:
     print("--- Running load_tournament_data() [BigQuery: mw_overall] ---")
     df = load_table_from_bigquery('mw_overall')
     if df is None or df.empty:
@@ -202,10 +222,8 @@ def load_tournament_data():
     print(f"--- load_tournament_data() done, shape: {df.shape} ---")
     return df
 
-# --- Helper Function: Load Player Analysis Data (BigQuery: app6) ---
 
-
-def load_player_analysis_data():
+def load_player_analysis_data() -> pd.DataFrame:
     print("--- Running load_player_analysis_data() [BigQuery: app6] ---")
     df = load_table_from_bigquery('app6')
     if df is None or df.empty:
@@ -229,8 +247,6 @@ def load_player_analysis_data():
     print(f"--- load_player_analysis_data() done, shape: {df.shape} ---")
     return df
 
-# --- Helper Function: Load Betting Analyzer Data (BigQuery: style_data_with_start_date) ---
-
 
 def load_betting_data():
     print(
@@ -250,7 +266,6 @@ def load_betting_data():
     for col in stat_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
 
-    # Aggregate per player/type
     grouped = df.groupby(['name', 'match_type'], as_index=False)[
         stat_cols].sum()
     records = []
@@ -267,7 +282,8 @@ def load_betting_data():
                     'Bowling Type': label, 'Total Runs': row[rcol], 'Total Balls': row[bcol], 'Total Outs': row[ocol]
                 })
     if not records:
-        return pd.DataFrame(columns=[*['name', 'match_type', 'Bowling Type', 'Total Runs', 'Total Balls', 'Total Outs'], 'run_rate', 'out_rate'])
+        return pd.DataFrame(columns=['name', 'match_type', 'Bowling Type', 'Total Runs', 'Total Balls', 'Total Outs', 'run_rate', 'out_rate'])
+
     proc = pd.DataFrame(records)
     proc['run_rate'] = np.where(
         proc['Total Balls'] > 0, proc['Total Runs']*100 / proc['Total Balls'], 0.0)
@@ -277,80 +293,182 @@ def load_betting_data():
     return proc
 
 
-# --- Startup Data Loading ---
-print("\n====== Data Loading Sequence Start ======\n")
-_df_main = load_main_data()
-_df_tourn = load_tournament_data()
-_df_player = load_player_analysis_data()
-_df_bet = load_betting_data()
-print("\n====== Data Loading Sequence Complete ======\n")
-
-# --- Serialize DataFrames ---
+# -----------------------------------------------------------------------------
+#  Cached JSON getters
+# -----------------------------------------------------------------------------
 
 
-def serialize_df(df: pd.DataFrame) -> str:
-    if df is None:
-        return None
-    df_copy = df.copy()
-    # Datetime to iso
-    for col in df_copy.select_dtypes(include=['datetime']).columns:
-        df_copy[col] = df_copy[col].apply(
-            lambda x: x.isoformat() if pd.notna(x) else None)
-    # Nullable ints to float
-    for col in df_copy.select_dtypes(include=['Int64']).columns:
-        df_copy[col] = df_copy[col].astype(float)
-    df_copy.replace([np.inf, -np.inf], [None, None], inplace=True)
-    return df_copy.to_json(orient='split', date_format='iso')
+@cache.memoize()
+def get_main_data_json():
+    df = load_main_data()
+    return df.to_json(orient='split', date_format='iso', date_unit='ms') if df is not None else None
 
 
-_main_store = serialize_df(_df_main)
-_tourn_store = serialize_df(_df_tourn)
-_player_store = serialize_df(_df_player)
-_bet_store = serialize_df(_df_bet)
+@cache.memoize()
+def get_tournament_data_json():
+    df = load_tournament_data()
+    return df.to_json(orient='split', date_format='iso', date_unit='ms') if df is not None else None
 
-# --- Initialize Dash App ---
-app = dash.Dash(__name__, use_pages=True, pages_folder='pages',
-                external_stylesheets=[
-                    dbc.themes.LUMEN, dbc.icons.FONT_AWESOME],
-                suppress_callback_exceptions=True,
-                meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}])
-server = app.server
 
-# --- Sidebar ---
-sidebar = dbc.Nav(
-    [
-        dbc.NavLink([html.I(className="fas fa-home me-2"),
-                    html.Span("Home")], href="/", active="exact"),
-        html.Hr(), html.P("Analysis Pages", className="text-muted small fw-bold ps-3"),
-        *[
-            dbc.NavLink(html.Span(page['name']),
-                        href=page['relative_path'], active="exact")
-            for page in sorted(dash.page_registry.values(), key=lambda p: p['module'])
-            if page['path'] != '/'
-        ]
-    ], vertical=True, pills=True, className="bg-light",
-    style={'position': 'fixed', 'top': 0, 'left': 0, 'bottom': 0,
-           'width': '16rem', 'padding': '2rem 1rem', 'overflowY': 'auto'}
-)
+@cache.memoize()
+def get_player_analysis_data_json():
+    df = load_player_analysis_data()
+    return df.to_json(orient='split', date_format='iso', date_unit='ms') if df is not None else None
 
-# --- App Layout ---
+
+@cache.memoize()
+def get_betting_analyzer_data_json():
+    df = load_betting_data()
+    return df.to_json(orient='split', date_format='iso', date_unit='ms') if df is not None else None
+
+
+# -----------------------------------------------------------------------------
+# Threading to avoid blocking the main thread
+# -----------------------------------------------------------------------------
+def warm_up_cache():
+    print("\n--- Warming up cache in background ---")
+    try:
+        get_main_data_json()
+        get_tournament_data_json()
+        get_player_analysis_data_json()
+        get_betting_analyzer_data_json()
+        print("--- Cache warm-up done ---\n")
+    except Exception as e:
+        print(f"WARNING: Cache warm-up failed: {e}")
+
+
+threading.Thread(target=warm_up_cache, daemon=True).start()
+
+
+# -----------------------------------------------------------------------------
+#  Layout
+# -----------------------------------------------------------------------------
+
 app.layout = dbc.Container([
-    dcc.Store(id='main-data-store', data=_main_store),
-    dcc.Store(id='tournament-data-store', data=_tourn_store),
-    dcc.Store(id='player-analysis-data-store', data=_player_store),
-    dcc.Store(id='betting-analyzer-data-store', data=_bet_store),
-    dbc.Row([
-        dbc.Col(sidebar, width=2, style={'padding': '0'}),
-        dbc.Col(dash.page_container, style={
-                'marginLeft': '16rem', 'padding': '2rem 1rem', 'overflowX': 'hidden'})
-    ])
+
+    dcc.Location(id='url', refresh=False),
+
+    dcc.Loading(
+        id="full-page-loading",
+        type="cube",
+        fullscreen=True,
+        children=[
+            # --- All dcc.Stores ---
+            dcc.Store(id='main-data-store'),
+            dcc.Store(id='tournament-data-store'),
+            dcc.Store(id='player-analysis-store'),
+            dcc.Store(id='betting-analyzer-data-store'),
+
+            dbc.Row([
+                # --- Sidebar ---
+                dbc.Col([
+                    html.Div([
+                        html.H2("🏏 Dashboard", className="display-6",
+                                style={"padding": "20px 10px"}),
+                        html.Hr(),
+                        dbc.Nav([
+                            dbc.NavLink(
+                                page["name"],
+                                href=page["path"],
+                                active="exact",
+                                style={"margin": "5px 0"}
+                            ) for page in dash.page_registry.values()
+                        ],
+                            vertical=True,
+                            pills=True,
+                            className="flex-column",
+                            style={"padding": "10px"}
+                        )
+                    ], style={
+                        "position": "fixed",
+                        "top": 0,
+                        "left": 0,
+                        "bottom": 0,
+                        "width": "16rem",
+                        "backgroundColor": "#f8f9fa",
+                        "padding": "2rem 1rem",
+                        "overflowY": "auto"
+                    })
+                    # Sidebar occupies 2/12 grid
+                ], width=2, style={"padding": "0"}),
+
+                # --- Page Content ---
+                dbc.Col([
+                    dash.page_container
+                ], style={
+                    "marginLeft": "16rem",
+                    "padding": "2rem 1rem",
+                    "overflowX": "hidden"
+                })
+            ])
+        ]
+    )
+
 ], fluid=True)
 
-# --- Run Server ---
+
+# -----------------------------------------------------------------------------
+#  Lazy‐load callbacks
+# -----------------------------------------------------------------------------
+
+# when user navigates to any of these pages, populate main-data-store
+
+
+@callback(
+    Output('main-data-store', 'data'),
+    Input('url', 'pathname'),
+    prevent_initial_call=True
+)
+def load_main_store(pathname):
+    if pathname in [
+        '/analyzer', '/heatmap', '/recent-form',
+        '/radar-bubble', '/performance-analysis'
+    ]:
+        return get_main_data_json()
+    return no_update
+
+# when user navigates to any of these pages, populate tournament-data-store
+
+
+@callback(
+    Output('tournament-data-store', 'data'),
+    Input('url', 'pathname'),
+    prevent_initial_call=True
+)
+def load_tournament_store(pathname):
+    if pathname in ['/tournaments', '/match-explorer']:
+        return get_tournament_data_json()
+    return no_update
+
+# when user navigates to /player-analysis, populate player-analysis-data-store
+
+
+@callback(
+    Output('player-analysis-store', 'data'),
+    Input('url', 'pathname'),
+    prevent_initial_call=True
+)
+def load_player_analysis_store(pathname):
+    if pathname == '/player-analysis':
+        return get_player_analysis_data_json()
+    return no_update
+
+
+@callback(
+    Output('betting-analyzer-data-store', 'data'),
+    Input('url', 'pathname'),
+    prevent_initial_call=True
+)
+def load_betting_analyzer_store(pathname):
+    if pathname == '/betting-analyzer':
+        return get_betting_analyzer_data_json()
+    return no_update
+
+
+# -----------------------------------------------------------------------------
+#  Run
+# -----------------------------------------------------------------------------
+
+
 if __name__ == '__main__':
-    print("Main Data Loaded:", 'OK' if _main_store else 'FAILED')
-    print("Tournament Data Loaded:", 'OK' if _tourn_store else 'FAILED')
-    print("Player Data Loaded:", 'OK' if _player_store else 'FAILED')
-    print("Betting Data Loaded:", 'OK' if _bet_store else 'FAILED')
-    port = int(os.environ.get('PORT', 8050))
-    app.run(debug=False, host='0.0.0.0', port=port)
+    app.run(debug=False, port=8050)

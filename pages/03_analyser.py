@@ -320,6 +320,8 @@ def layout():
                                  ]
                              )
                          ], className="mb-3"),
+                         dbc.Button("Submit", id='analyzer-submit-button', n_clicks=0,
+                                    color='primary', className="mt-2", disabled=True),
                          # --- END OF DATE PICKER ---
                          html.Hr(),
                          html.P(["4. Click a country on the map to see stats against that opponent within the selected period."],
@@ -501,14 +503,17 @@ def update_analyzer_date_picker_range(selected_player, selected_format, stored_d
     Output('analyzer-iso-map-store', 'data'),
     Output('analyzer-selected-opposition-store', 'data',
            allow_duplicate=True),  # Reset opposition
-    Input('analyzer-player-dropdown', 'value'),
-    Input('analyzer-format-radio', 'value'),
-    Input('analyzer-date-picker-range', 'start_date'),  # *** ADDED INPUT ***
-    Input('analyzer-date-picker-range', 'end_date'),   # *** ADDED INPUT ***
-    Input('main-data-store', 'data'),
+    Input('analyzer-submit-button', 'n_clicks'),
+    State('analyzer-player-dropdown', 'value'),
+    State('analyzer-format-radio', 'value'),
+    State('analyzer-date-picker-range', 'start_date'),  # *** ADDED INPUT ***
+    State('analyzer-date-picker-range', 'end_date'),   # *** ADDED INPUT ***
+    State('main-data-store', 'data'),
     prevent_initial_call=True
 )
-def analyzer_update_map(selected_player, selected_format, start_date, end_date, stored_data):
+def analyzer_update_map(n_clicks, selected_player, selected_format, start_date, end_date, stored_data):
+    if not n_clicks:
+        raise PreventUpdate
     """Generates the map based on player, format, AND date range."""
     print(
         f"Callback triggered: analyzer_update_map (Player: {selected_player}, Format: {selected_format}, Range: {start_date} to {end_date})")
