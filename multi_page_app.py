@@ -9,7 +9,7 @@ import numpy as np
 
 # --- Set up GCP Credentials and BigQuery Client ---
 # removed the below line to avoid exposing credentials in the code instead used service account directly while deploying on GCP, COMMENT OUT when running locally
-# os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"./primordial-veld-456613-n6-c5dd57e4037a.json"
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"./primordial-veld-456613-n6-c5dd57e4037a.json"
 # Initialize a global BigQuery client
 bq_client = bigquery.Client()
 
