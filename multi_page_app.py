@@ -8,7 +8,8 @@ import pandas as pd
 import numpy as np
 
 # --- Set up GCP Credentials and BigQuery Client ---
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"./primordial-veld-456613-n6-c5dd57e4037a.json"
+# removed the below line to avoid exposing credentials in the code instead used service account directly while deploying on GCP, COMMENT OUT when running locally
+# os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"./primordial-veld-456613-n6-c5dd57e4037a.json"
 # Initialize a global BigQuery client
 bq_client = bigquery.Client()
 
@@ -351,4 +352,5 @@ if __name__ == '__main__':
     print("Tournament Data Loaded:", 'OK' if _tourn_store else 'FAILED')
     print("Player Data Loaded:", 'OK' if _player_store else 'FAILED')
     print("Betting Data Loaded:", 'OK' if _bet_store else 'FAILED')
-    app.run(debug=False, port=8050)
+    port = int(os.environ.get('PORT', 8050))
+    app.run(debug=False, host='0.0.0.0', port=port)
