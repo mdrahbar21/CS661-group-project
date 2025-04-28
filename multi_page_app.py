@@ -347,62 +347,60 @@ threading.Thread(target=warm_up_cache, daemon=True).start()
 app.layout = dbc.Container([
 
     dcc.Location(id='url', refresh=False),
+    dcc.Store(id='main-data-store'),
+    dcc.Store(id='tournament-data-store'),
+    dcc.Store(id='player-analysis-store'),
+    dcc.Store(id='betting-analyzer-data-store'),
+    dcc.Store(id='initial-load-complete', data=False),
 
-    dcc.Loading(
-        id="full-page-loading",
-        type="cube",
-        fullscreen=True,
-        children=[
-            # --- All dcc.Stores ---
-            dcc.Store(id='main-data-store'),
-            dcc.Store(id='tournament-data-store'),
-            dcc.Store(id='player-analysis-store'),
-            dcc.Store(id='betting-analyzer-data-store'),
+    html.Div(id='full-loader-wrapper', children=[
+        dcc.Loading(
+            id="full-page-loading",
+            type="cube",
+            fullscreen=True,
+            children=[
+                dbc.Row([
+                    dbc.Col([
+                        html.Div([
+                            html.H2("🏏 Dashboard", className="display-6",
+                                    style={"padding": "20px 10px"}),
+                            html.Hr(),
+                            dbc.Nav([
+                                dbc.NavLink(
+                                    page["name"],
+                                    href=page["path"],
+                                    active="exact",
+                                    style={"margin": "5px 0"}
+                                ) for page in dash.page_registry.values()
+                            ],
+                                vertical=True,
+                                pills=True,
+                                className="flex-column",
+                                style={"padding": "10px"}
+                            )
+                        ], style={
+                            "position": "fixed",
+                            "top": 0,
+                            "left": 0,
+                            "bottom": 0,
+                            "width": "16rem",
+                            "backgroundColor": "#f8f9fa",
+                            "padding": "2rem 1rem",
+                            "overflowY": "auto"
+                        })
+                    ], width=2, style={"padding": "0"}),
 
-            dbc.Row([
-                # --- Sidebar ---
-                dbc.Col([
-                    html.Div([
-                        html.H2("🏏 Dashboard", className="display-6",
-                                style={"padding": "20px 10px"}),
-                        html.Hr(),
-                        dbc.Nav([
-                            dbc.NavLink(
-                                page["name"],
-                                href=page["path"],
-                                active="exact",
-                                style={"margin": "5px 0"}
-                            ) for page in dash.page_registry.values()
-                        ],
-                            vertical=True,
-                            pills=True,
-                            className="flex-column",
-                            style={"padding": "10px"}
-                        )
+                    dbc.Col([
+                        dash.page_container
                     ], style={
-                        "position": "fixed",
-                        "top": 0,
-                        "left": 0,
-                        "bottom": 0,
-                        "width": "16rem",
-                        "backgroundColor": "#f8f9fa",
+                        "marginLeft": "16rem",
                         "padding": "2rem 1rem",
-                        "overflowY": "auto"
+                        "overflowX": "hidden"
                     })
-                    # Sidebar occupies 2/12 grid
-                ], width=2, style={"padding": "0"}),
-
-                # --- Page Content ---
-                dbc.Col([
-                    dash.page_container
-                ], style={
-                    "marginLeft": "16rem",
-                    "padding": "2rem 1rem",
-                    "overflowX": "hidden"
-                })
-            ])
-        ]
-    )
+                ])
+            ]
+        )
+    ])
 
 ], fluid=True)
 
@@ -464,6 +462,57 @@ def load_betting_analyzer_store(pathname):
         return get_betting_analyzer_data_json()
     return no_update
 
+
+@callback(
+    Output('initial-load-complete', 'data'),
+    Input('main-data-store', 'data'),
+    Input('tournament-data-store', 'data'),
+    Input('player-analysis-store', 'data'),
+    Input('betting-analyzer-data-store', 'data'),
+    prevent_initial_call=True
+)
+def mark_initial_load(main_data, tournament_data, player_data, betting_data):
+    if main_data and tournament_data and player_data and betting_data:
+        return True
+    return no_update
+
+
+@callback(
+    Output('full-loader-wrapper', 'children'),
+    Input('initial-load-complete', 'data')
+)
+def hide_loading_animation(loaded):
+    if loaded:
+        return dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H2("🏏 Dashboard", className="display-6",
+                            style={"padding": "20px 10px"}),
+                    html.Hr(),
+                    dbc.Nav([
+                        dbc.NavLink(
+                            page["name"],
+                            href=page["path"],
+                            active="exact",
+                            style={"margin": "5px 0"}
+                        ) for page in dash.page_registry.values()
+                    ], vertical=True, pills=True, className="flex-column", style={"padding": "10px"})
+                ], style={
+                    "position": "fixed",
+                    "top": 0,
+                    "left": 0,
+                    "bottom": 0,
+                    "width": "16rem",
+                    "backgroundColor": "#f8f9fa",
+                    "padding": "2rem 1rem",
+                    "overflowY": "auto"
+                })
+            ], width=2, style={"padding": "0"}),
+            dbc.Col([
+                dash.page_container
+            ], style={"marginLeft": "16rem", "padding": "2rem 1rem", "overflowX": "hidden"})
+        ])
+    return no_update
 
 # -----------------------------------------------------------------------------
 #  Run
